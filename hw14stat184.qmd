@@ -1,0 +1,511 @@
+---
+title: "Data Wrangling"
+author: "Michael Honig"
+date: "November 5, 2025"
+format: 
+  pdf:
+    toc: false
+    geometry: margin=1in
+execute: 
+  echo: true
+  warning: false
+  message: false
+  cache: false
+---
+
+# Armed Forces Frequency Tables I
+## Description
+To turn the pivot table into two data frames, the plan is to first create a table for a group of soldiers and another for individual soldiers to handle the two separate cases. I will also use a pay grade and rank mapping to determine the pay per rank. In the group table, I will include the branch, pay grade, rank, and frequency of soldiers, then merge this data with the pay–rank mapping. For the individual soldier table, I will reference the group table and repeat each row based on the count of soldiers in that rank and position so that each row represents one soldier. Each soldier will have a unique ID so that the data set contains labeled information for every soldier, including their rank, pay grade, and branch.
+
+## Data
+Google Sheets Armed Forces Data
+
+## Packages
+'dplyr' - for data wrangling and filtering
+'janitor' - for cleaning column names
+'googlesheets4' - to read the Data
+'kableExtra' - to format output tables
+'tidyr' - for reshaping data
+
+### Functions
+'read_sheet()' - imports the data from Google
+'mutate()', 'filter()', 'across()'- for cleaning and manipulating columns
+'pivot_longer()' / 'pivot_wider() - for reshaping the data between groups
+'kbl()' 0 displays tables neatly in report
+
+```{r, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(rvest)
+library(readr)
+library(googlesheets4)
+
+sheet1 <- "https://docs.google.com/spreadsheets/d/19xQnI1cB"
+sheet2 <- "h6Jkw7eP8YQuuicMlVDF7Gr-nXCb5qbwb_E/export?format=csv"
+sheet_url <- paste0(sheet1, sheet2)
+pivot_data <- read.csv(sheet_url, header = FALSE, stringsAsFactors = FALSE)
+
+header_branches <- as.character(pivot_data[2, ])
+header_sexes <- as.character(pivot_data[3, ])
+
+for (i in 2:length(header_branches)) {
+  if (is.na(header_branches[i]) || header_branches[i] == "") {
+    header_branches[i] <- header_branches[i - 1]
+  }
+}
+combined_headers <- paste(header_branches, header_sexes, sep = "_")
+combined_headers[1] <- "PayGrade"
+colnames(pivot_data) <- combined_headers
+pivot_data <- pivot_data[-c(1,2,3), ]
+group_soldiers <- pivot_data %>%
+  pivot_longer(
+    cols = -PayGrade, # ignore PayGrade column
+    names_to = c("Branch", "Sex"), # split up branch and sex columns
+    names_sep = "_", 
+    values_to = "Frequency" # new frequency column name
+  ) %>%
+  # filter out empty values and total column from gender
+  filter(!is.na(Frequency) & Frequency != "") %>%
+  filter(Sex != "Total") %>%
+  mutate(Frequency = as.numeric(gsub(",", "", Frequency))) %>%
+  arrange(Branch, PayGrade, Sex)
+
+individual_soldiers <- group_soldiers %>%
+  filter(!is.na(Frequency) & Frequency > 0) %>%
+  # make sure no nonzero/empty frequencies
+  uncount(Frequency) %>% #expand each row by frequency
+  mutate(soldier_id = row_number()) %>% # soldier_id for soldiers
+  select(soldier_id, everything()) %>% # order soldier_id in front
+  arrange(Branch, PayGrade, Sex)
+```
+
+```{r}
+group_soldiers
+individual_soldiers
+```
+
+# Armed Forces Frequency Tables II
+## Description
+The frequency table below summarizes the number and percentage of male and female service members holding the E5 pay grade across all U.S. military branches. For each branch, the table presents the total count of personnel by sex along with the corresponding percentage within that branch. The final row, “All Branches,” combines totals across all branches to show the overall gender distribution for the E5 rank. Overall, the table indicates that males make up the majority of service members at the E5 pay grade in every branch of the military.
+
+```{r, include= FALSE}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(googlesheets4)
+library(tidyr)
+
+# Load the pivot table data
+sheet1 <- "https://docs.google.com/spreadsheets/d/19xQnI1cB"
+sheet2 <- "h6Jkw7eP8YQuuicMlVDF7Gr-nXCb5qbwb_E/export?format=csv"
+sheet_url <- paste0(sheet1, sheet2)
+pivot_data <- read.csv(sheet_url, header = FALSE, stringsAsFactors = FALSE)
+
+# Assign column names
+colnames(pivot_data) <- c(
+  "PayGrade",
+  "Army_Male", "Army_Female", "Army_Total",
+  "Navy_Male", "Navy_Female", "Navy_Total",
+  "Marine_Male", "Marine_Female", "Marine_Total",
+  "AirForce_Male", "AirForce_Female", "AirForce_Total",
+  "Space_Male", "Space_Female", "Space_Total",
+  "Total_Male", "Total_Female", "Total_Total"
+)
+
+# Clean data
+pivot_data <- pivot_data %>%
+  mutate(across(-PayGrade, ~ as.numeric(gsub(",", "", .)))) %>%
+  slice(-(1:3)) %>%
+  filter(!(PayGrade %in% c("Total Enlisted", "Total Warrant Officers",
+                           "Total Officers", "Total"))) %>%
+  slice(-n())
+
+# Rank to check
+rank_to_check <- "E5"
+
+# Filter for that rank
+rank_data <- pivot_data %>%
+  filter(grepl(rank_to_check, PayGrade, ignore.case = TRUE)) %>%
+  select(PayGrade,
+         Army_Male, Army_Female,
+         Navy_Male, Navy_Female,
+         Marine_Male, Marine_Female,
+         AirForce_Male, AirForce_Female,
+         Space_Male, Space_Female)
+
+# Reshape into long format
+rank_long <- rank_data %>%
+  pivot_longer(
+    cols = -PayGrade,
+    names_to = c("Branch", "Sex"),
+    names_sep = "_",
+    values_to = "Count"
+  )
+
+# Frequency table with merged Frequency column 
+freq_table <- rank_long %>%
+  group_by(Branch) %>%
+  mutate(Total_Branch = sum(Count, na.rm = TRUE),
+         Percent = round((Count / Total_Branch) * 100, 2),
+         Frequency = paste0(formatC(Count, format = "d", big.mark = ","), " (", Percent, "%)")) %>%
+  ungroup() %>%
+  select(Branch, Sex, Frequency) %>%
+  arrange(Branch, Sex)
+
+# Add total row at bottom 
+total_row <- rank_long %>%
+  group_by(Sex) %>%
+  summarise(Count = sum(Count, na.rm = TRUE)) %>%
+  mutate(Branch = "All Branches") %>%
+  group_by() %>%
+  mutate(Percent = round((Count / sum(Count)) * 100, 2),
+         Frequency = paste0(formatC(Count, format = "d", big.mark = ","), " (", Percent, "%)")) %>%
+  select(Branch, Sex, Frequency)
+
+freq_table <- bind_rows(freq_table, total_row)
+
+# Display table nicely 
+freq_kable <- kbl(freq_table,
+                  caption = paste("Frequency Table: Rank", rank_to_check, "- Male vs Female by Branch"),
+                  align = "lcc",
+                  booktabs = TRUE) %>%
+  kable_styling(full_width = FALSE, position = "center", font_size = 12) %>%
+  row_spec(0, bold = TRUE)
+
+
+```
+
+```{r}
+freq_kable
+```
+
+# Popularity of Baby Names
+
+When examining the popularity of the selected baby names Jennifer, Michael, Emma, and Liam there were noticeable differences in their usage over time. These names were chosen to illustrate a range of naming trends. Jennifer was most popular in the 1960s and 1970s, which is reflected in its peak during that period. Michael has been consistently common for almost a century, representing a name that has remained popular over time. Emma has gradually increased in popularity in recent decades, showing a slow upward trend. Finally, Liam has experienced rapid growth in recent years, demonstrating its emergence as one of the most popular contemporary names.
+
+
+```{r, echo=FALSE}
+
+library(dcData)
+library(dplyr)
+library(ggplot2)
+data(BabyNames)
+
+selected_names <- c("Jennifer", "Michael", "Emma", "Liam")
+names_filtered <- BabyNames %>%
+  filter(name %in% selected_names)
+names_by_year <- names_filtered %>%
+  group_by(name, year) %>%
+  summarise(total_count = sum(count), .groups = 'drop')
+
+names_by_year <- names_by_year %>%
+  filter(year >= 1920)
+ggplot(names_by_year, aes(x = year, y = total_count, color = name,
+linetype = name)) +
+  geom_line(linewidth = 1.2) +
+  scale_linetype_manual(values = c("Jennifer" = "solid",
+                                   "Michael" = "dashed",
+                                   "Emma" = "dotted", 
+                                   "Liam" = "twodash")) +
+scale_y_continuous(labels = scales::comma_format()) +
+theme_minimal() +
+theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10, color = "gray30"),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  ) +
+labs(
+    title = "Popularity of Selected Baby Names Over Time (1920-2015)",
+    subtitle = "Jennifer peaked in the 1970s-80s while Liam shows-
+recent explosive growth",
+    x = "Year",
+    y = "Total Number of Babies",
+    color = "Name",
+    linetype = "Name",
+    caption = "Data: dcData::BabyNames"
+  )
+```
+
+# Plotting a Mathematical Function
+
+```{r, include=FALSE}
+Max_Volume <- function(x, paper_length = 36, paper_width = 48){
+  volume <- (paper_length - (2*x))*(paper_width - (2*x))*x
+  return(volume)
+}
+```
+
+The Function Max_Volume calculates the volume of an open-top box using the formula:
+
+V(x) = (L - 2x)(W - 2x)(x), where:
+x = side length of the square cutouts,
+L = length of the paper, and
+W = width of the paper
+
+The length and width of the resulting box decrease by twice the cutout size, and the height of the box is x
+
+The plot shows that the volume of the box rises with increasing cutout size, reaches its peak, and then decreases as the base area becomes too small. The maximum volume occurs at a cutout size of about 6.79 inches, giving a box volume of approximately 5239.81 cubic inches. This suggests that cutting squares of around 6.79 inches provides the most efficient box size, achieving the best balance between height and base dimensions.
+
+## Plot of cutout sizes
+
+```{r, echo=FALSE}
+library(ggplot2)
+
+x_values <- seq(0, 16, by = 0.01)
+volume_df <- data.frame(
+  x = x_values,
+  volume = Max_Volume(x_values)
+)
+ggplot(volume_df, aes(x = x, y = volume)) +
+  geom_line(color = "blue", linewidth = 1.2) +
+  geom_point(aes(x = x_values[which.max(volume_df$volume)],
+                 y = max(volume_df$volume)),
+             color = "red", size = 3) +  # highlight maximum
+  labs(
+    title = "Volume of Open Box vs. Cutout Side Length",
+    subtitle = "Maximum volume occurs at red point",
+    x = "Side length of cutout x (inches)",
+    y = "Volume of open box (in³)"
+  ) +
+  theme_minimal()
+```
+
+# What I've Learned so far
+
+Throughout the length of this course, we have gone over many different topics involving how to wrangle and organize data, the different ways to tidy up data within a data frame, and also various methods for plotting data with a data visualization and how to make that visualization impact and as efficient as possible. The use of data frames within a set of data allows the opportunity to arrange many different variables and organize them into anyway you need in order to represent some pattern or trend, or even help get a solution to an ongoing problem. Tidying and wrangling data allows us to pull information from the internet or from other created data table, and shape it into something entirely new and find new values and meaning from the original data. The work within Quarto helps us create clean documentation and various types of text markdown files that can formally represent our data and findings in a professional format and help make the information as clear as possible. Data visualization techniques also really showed me how I should go about when designing a plot or collecting data to include the most important aspects and make my visual as appealing and interpret able as possible for the best chance at being understood and used.The use of many different R packages has also shown the usefulness of R when it comes to handling statistical data and plotting/organizing information.
+
+# Code Appendix
+
+## Armed Forces Frequency Tables I
+```{r, eval=FALSE}
+library(dplyr)
+library(tidyverse)
+library(rvest)
+library(readr)
+library(googlesheets4)
+# get the google sheets URL
+sheet1 <- "https://docs.google.com/spreadsheets/d/19xQnI1cB"
+sheet2 <- "h6Jkw7eP8YQuuicMlVDF7Gr-nXCb5qbwb_E/export?format=csv"
+# merge sections of URL
+sheet_url <- paste0(sheet1, sheet2)
+# read data
+pivot_data <- read.csv(sheet_url, header = FALSE, stringsAsFactors = FALSE)
+# extract branch names/sex from row 2 and 3
+header_branches <- as.character(pivot_data[2, ])
+header_sexes <- as.character(pivot_data[3, ])
+# fill in missing branch names
+for (i in 2:length(header_branches)) {
+  if (is.na(header_branches[i]) || header_branches[i] == "") {
+    header_branches[i] <- header_branches[i - 1]
+  }
+}
+combined_headers <- paste(header_branches, header_sexes, sep = "_")
+combined_headers[1] <- "PayGrade"
+colnames(pivot_data) <- combined_headers
+pivot_data <- pivot_data[-c(1,2,3), ]
+group_soldiers <- pivot_data %>%
+  # convert wide to long format
+  pivot_longer(
+    cols = -PayGrade, # ignore PayGrade column
+    names_to = c("Branch", "Sex"), # split up branch and sex columns
+    names_sep = "_", 
+    values_to = "Frequency" # new frequency column name
+  ) %>%
+  # filter out empty values and total column from gender
+  filter(!is.na(Frequency) & Frequency != "") %>%
+  filter(Sex != "Total") %>%
+  #convert frequency from string to numeric
+  mutate(Frequency = as.numeric(gsub(",", "", Frequency))) %>%
+  # sort by branch, paygrade, sex
+  arrange(Branch, PayGrade, Sex)
+#individual soldier data frame
+individual_soldiers <- group_soldiers %>%
+  filter(!is.na(Frequency) & Frequency > 0) %>%
+  # make sure no nonzero/empty frequencies
+  uncount(Frequency) %>%
+  #expand each row by frequency
+  mutate(soldier_id = row_number()) %>% 
+  # soldier_id for soldiers
+  select(soldier_id, everything()) %>% 
+  # order soldier_id in front
+  arrange(Branch, PayGrade, Sex)
+```
+
+## Armed Forces Frequency Tables II
+
+```{r, eval=FALSE}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(googlesheets4)
+library(tidyr)
+
+# Load the pivot table data
+sheet1 <- "https://docs.google.com/spreadsheets/d/19xQnI1cB"
+sheet2 <- "h6Jkw7eP8YQuuicMlVDF7Gr-nXCb5qbwb_E/export?format=csv"
+sheet_url <- paste0(sheet1, sheet2)
+pivot_data <- read.csv(sheet_url, header = FALSE, stringsAsFactors = FALSE)
+
+# Assign column names
+colnames(pivot_data) <- c(
+  "PayGrade",
+  "Army_Male", "Army_Female", "Army_Total",
+  "Navy_Male", "Navy_Female", "Navy_Total",
+  "Marine_Male", "Marine_Female", "Marine_Total",
+  "AirForce_Male", "AirForce_Female", "AirForce_Total",
+  "Space_Male", "Space_Female", "Space_Total",
+  "Total_Male", "Total_Female", "Total_Total"
+)
+
+# Clean data
+pivot_data <- pivot_data %>%
+  mutate(across(-PayGrade, ~ as.numeric(gsub(",", "", .)))) %>%
+  slice(-(1:3)) %>%
+  filter(!(PayGrade %in% c("Total Enlisted", "Total Warrant Officers",
+                           "Total Officers", "Total"))) %>%
+  slice(-n())
+
+# Rank to check
+rank_to_check <- "E5"
+
+# Filter for that rank
+rank_data <- pivot_data %>%
+  filter(grepl(rank_to_check, PayGrade, ignore.case = TRUE)) %>%
+  select(PayGrade,
+         Army_Male, Army_Female,
+         Navy_Male, Navy_Female,
+         Marine_Male, Marine_Female,
+         AirForce_Male, AirForce_Female,
+         Space_Male, Space_Female)
+
+# Reshape into long format
+rank_long <- rank_data %>%
+  pivot_longer(
+    cols = -PayGrade,
+    names_to = c("Branch", "Sex"),
+    names_sep = "_",
+    values_to = "Count"
+  )
+
+# Frequency table with merged Frequency column 
+freq_table <- rank_long %>%
+  group_by(Branch) %>%
+  mutate(Total_Branch = sum(Count, na.rm = TRUE),
+         Percent = round((Count / Total_Branch) * 100, 2),
+         Frequency = paste0(formatC(Count, format = "d", big.mark = ","),
+" (", Percent, "%)")) %>%
+  ungroup() %>%
+  select(Branch, Sex, Frequency) %>%
+  arrange(Branch, Sex)
+
+# Add total row at bottom 
+total_row <- rank_long %>%
+  group_by(Sex) %>%
+  summarise(Count = sum(Count, na.rm = TRUE)) %>%
+  mutate(Branch = "All Branches") %>%
+  group_by() %>%
+  mutate(Percent = round((Count / sum(Count)) * 100, 2),
+         Frequency = paste0(formatC(Count, format = "d", big.mark = ","),
+" (", Percent, "%)")) %>%
+  select(Branch, Sex, Frequency)
+
+freq_table <- bind_rows(freq_table, total_row)
+
+# Display table nicely 
+freq_kable <- kbl(freq_table,
+                  caption = paste("Frequency Table: Rank", rank_to_check,
+"- Male vs Female by Branch"),
+                  align = "lcc",
+                  booktabs = TRUE) %>%
+  kable_styling(full_width = FALSE, position = "center", font_size = 12) %>%
+  row_spec(0, bold = TRUE)
+
+```
+
+## Popularity of Baby names
+```{r, eval=FALSE}
+
+library(dcData)
+library(dplyr)
+library(ggplot2)
+data(BabyNames)
+#load baby names dataset
+
+#four names selected
+selected_names <- c("Jennifer", "Michael", "Emma", "Liam")
+names_filtered <- BabyNames %>%
+  filter(name %in% selected_names)
+# aggregate counts by name and year
+names_by_year <- names_filtered %>%
+  group_by(name, year) %>%
+  summarise(total_count = sum(count), .groups = 'drop')
+# filter to include years from 1920 and on
+names_by_year <- names_by_year %>%
+  filter(year >= 1920)
+# line plot showing popularity of names over time
+ggplot(names_by_year, aes(x = year, y = total_count, color = name,
+linetype = name)) +
+  geom_line(linewidth = 1.2) +
+  # assign different line style to each name
+  scale_linetype_manual(values = c("Jennifer" = "solid",
+                                   "Michael" = "dashed",
+                                   "Emma" = "dotted", 
+                                   "Liam" = "twodash")) +
+#format y axis with commas
+scale_y_continuous(labels = scales::comma_format()) +
+theme_minimal() +
+theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10, color = "gray30"),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  ) +
+  # add labels, title and caption
+labs(
+    title = "Popularity of Selected Baby Names Over Time (1920-2015)",
+    subtitle = "Jennifer peaked in the 1970s-80s while Liam shows-
+recent explosive growth",
+    x = "Year",
+    y = "Total Number of Babies",
+    color = "Name",
+    linetype = "Name",
+    caption = "Data: dcData::BabyNames"
+  )
+```
+
+## Plotting a Mathematical Function
+
+```{r, eval=FALSE}
+# equation calculation to return volume of cutout box
+Max_Volume <- function(x, paper_length = 36, paper_width = 48){
+  volume <- (paper_length - (2*x))*(paper_width - (2*x))*x
+  return(volume)
+}
+```
+
+```{r, eval=FALSE}
+library(ggplot2)
+# sequence of x value from 0 to 4.25
+x_values <- seq(0, 16, by = 0.01)
+# data frame with x values and volumes
+volume_df <- data.frame(
+  x = x_values,
+  volume = Max_Volume(x_values)
+)
+# plot showing relationship between cutout size and volume
+ggplot(volume_df, aes(x = x, y = volume)) +
+  geom_line(color = "blue", linewidth = 1.2) +
+  geom_point(aes(x = x_values[which.max(volume_df$volume)],
+                 y = max(volume_df$volume)),
+             color = "red", size = 3) +  # highlight maximum
+  #labels and title
+  labs(
+    title = "Volume of Open Box vs. Cutout Side Length",
+    subtitle = "Maximum volume occurs at red point",
+    x = "Side length of cutout x (inches)",
+    y = "Volume of open box (in³)"
+  ) +
+  # simple theme
+  theme_minimal()
+```
