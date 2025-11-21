@@ -2,7 +2,7 @@
 Github Practice Repo
 ## Contents
 - Activity 14 PDF
-- QMD file used in activity 14
+- Activity 14 QMD file
 - PLAN.md
 ## Branching
 - main
