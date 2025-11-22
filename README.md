@@ -19,4 +19,6 @@ See Plan.md for plan:
 - Issues
     - Issue #1: Add PLAN.md
     - Issue #2: Review Activity 14 files
-      
+ ## Contact information
+ - Email: Michaeljhonig@gmail.com
+ - GitHub: https://github.com/michaeljhonig24
