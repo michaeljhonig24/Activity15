@@ -3,7 +3,7 @@
 This repository contains the work fro Activity 14 and Activity 15.
 It includes the Activity 14 PDF, thje Activity 14 QMD file, and the PLAN.md outlining the workflow and repository maintenance.
 ## Data
-Activity 14 contains PDF and QMD files
+Activity 14 contains PDF and QMD files from previous Quarto assignment
 # Plan
 See Plan.md for plan:
 - Project goals
